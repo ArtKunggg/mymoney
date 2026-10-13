@@ -40,12 +40,23 @@
   const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
 
   // ------------------------------------------------------------ storage
+  // v1 stored a debt's installment amount (`per`); v2 stores the whole amount owed (`amount`) and
+  // derives each installment from it. Old data and old backup files are converted on the way in.
+  function migrate(d) {
+    d.debts.forEach((x) => {
+      if (typeof x.amount !== 'number' && typeof x.per === 'number') x.amount = x.per * x.total;
+      delete x.per;
+      x.payments = x.payments || [];
+    });
+    d.v = 2;
+    return d;
+  }
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(KEY) || 'null');
-      if (d && Array.isArray(d.expenses) && Array.isArray(d.debts)) return d;
-    } catch (e) { /* unreadable: start empty, but keep the raw text below */ }
-    return { v: 1, expenses: [], debts: [], lastBackup: null };
+      if (d && Array.isArray(d.expenses) && Array.isArray(d.debts)) return migrate(d);
+    } catch (e) { /* unreadable: start empty */ }
+    return { v: 2, expenses: [], debts: [], lastBackup: null };
   }
   let db = load();
   function save() {
@@ -60,18 +71,25 @@
   // Ask the browser not to clear our data under storage pressure (granted silently or not at all).
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-  // ------------------------------------------------------------ debts (fixed monthly installments)
-  // A debt: name, per (satang per installment), total (installments), paid (installments done),
+  // ------------------------------------------------------------ debts (monthly installments)
+  // A debt: name, amount (satang owed in total), total (installments), paid (installments done),
   // day (due day of month), start ('YYYY-MM' of installment #1), payments [{n, date, amount}].
+  // Installments split the amount evenly; the last one takes the leftover satang.
   function dueDate(debt, n) {                         // date of installment n (1-based)
     const ym = addMonths(debt.start, n - 1);
     const [y, m] = ym.split('-').map(Number);
     const last = new Date(y, m, 0).getDate();
     return `${ym}-${pad(Math.min(debt.day, last))}`;
   }
-  const isDone = (d) => d.paid >= d.total;
+  const baseOf = (d) => Math.floor(d.amount / d.total);
+  const perOf = (d, n) => (n >= d.total ? d.amount - baseOf(d) * (d.total - 1) : baseOf(d));
+  // installments marked paid when the debt was entered count at their planned amount
+  const paidAmount = (d) => (d.payments || []).reduce((s, p) => s + p.amount, 0)
+    + Math.max(0, d.paid - (d.payments || []).length) * baseOf(d);
+  const remaining = (d) => Math.max(0, d.amount - paidAmount(d));
+  const isDone = (d) => d.paid >= d.total || remaining(d) <= 0;
   const nextDue = (d) => (isDone(d) ? null : dueDate(d, d.paid + 1));
-  const remaining = (d) => Math.max(0, d.total - d.paid) * d.per;
+  const nextAmount = (d) => Math.min(perOf(d, d.paid + 1), remaining(d));
   function dueStatus(date) {
     const k = daysBetween(today(), date);
     if (k < 0) return { cls: 'red', text: `เลยกำหนด ${-k} วัน`, k };
@@ -129,7 +147,7 @@
           return `<div class="due">
             <div class="item__main"><div class="item__title">${esc(d.name)}</div>
               <div class="item__sub">งวด ${d.paid + 1}/${d.total} · ${dateShort(date)} · <span class="chip chip--${st.cls}">${st.text}</span></div></div>
-            <div style="text-align:right"><div class="item__amt">${baht(d.per)}</div>
+            <div style="text-align:right"><div class="item__amt">${baht(nextAmount(d))}</div>
               <button class="btn btn--small btn--primary" data-pay="${d.id}" style="margin-top:6px">จ่ายแล้ว</button></div>
           </div>`;
         }).join('') : `<div class="empty" style="padding:12px"><b>✅</b>${open.length ? 'ยังไม่มีงวดที่ต้องจ่ายใน 2 สัปดาห์นี้' : 'ยังไม่มีหนี้ที่บันทึกไว้'}</div>`}
@@ -233,7 +251,7 @@
       <button class="btn btn--primary btn--block" data-add-debt>+ เพิ่มหนี้ผ่อน</button>
       ${done.length ? `<section class="card" style="margin-top:12px"><h2>ปิดหนี้แล้ว 🎉</h2><div class="list">${done.map((d) => `
         <button class="item" data-edit-debt="${d.id}"><span class="item__ico" aria-hidden="true">✅</span>
-          <span class="item__main"><span class="item__title">${esc(d.name)}</span><span class="item__sub">${d.total} งวด · งวดละ ${baht(d.per)}</span></span></button>`).join('')}</div></section>` : ''}`;
+          <span class="item__main"><span class="item__title">${esc(d.name)}</span><span class="item__sub">${baht(d.amount)} · ${d.total} งวด</span></span></button>`).join('')}</div></section>` : ''}`;
   }
 
   function debtCard(d) {
@@ -244,11 +262,12 @@
         <span class="chip chip--${st.cls}">${st.text}</span></div>
       <div class="facts">
         <div><span class="sub">งวดถัดไป</span><b>${dateShort(due)}</b></div>
-        <div><span class="sub">งวดละ</span><b>${baht(d.per)}</b></div>
+        <div><span class="sub">งวดนี้</span><b>${baht(nextAmount(d))}</b></div>
         <div><span class="sub">จ่ายแล้ว</span><b>${d.paid}/${d.total} งวด</b></div>
         <div><span class="sub">คงเหลือ</span><b>${baht(remaining(d))}</b></div>
       </div>
-      <div class="bar"><i style="width:${(d.paid / d.total) * 100}%"></i></div>
+      <div class="sub" style="margin:-4px 0 8px">ยอดหนี้ทั้งหมด ${baht(d.amount)} · จ่ายไปแล้ว ${baht(paidAmount(d))}</div>
+      <div class="bar"><i style="width:${Math.min(100, (paidAmount(d) / d.amount) * 100)}%"></i></div>
       <div class="actions">
         <button class="btn btn--small btn--primary" data-pay="${d.id}">จ่ายงวด ${d.paid + 1} แล้ว</button>
         <button class="btn btn--small" data-ics="${d.id}">📅 เพิ่มลงปฏิทิน</button>
@@ -259,20 +278,22 @@
 
   function debtForm(d) {
     const editing = Boolean(d);
-    d = d || { name: '', per: 0, total: 10, paid: 0, day: new Date().getDate(), start: thisMonth(), note: '' };
+    d = d || { name: '', amount: 0, total: 10, paid: 0, day: new Date().getDate(), start: thisMonth(), note: '' };
+    // the date the user sees is the *next* installment's (or the last one's, for a finished debt)
+    const shownN = Math.min(d.paid + 1, d.total);
     openSheet(`
       <h2 id="sheet-title">${editing ? 'แก้ไขหนี้' : 'เพิ่มหนี้ผ่อน'}</h2>
       <label class="field"><span>ชื่อรายการ</span><input class="input" name="name" value="${esc(d.name)}" required maxlength="60" placeholder="เช่น ผ่อนโทรศัพท์, บัตรเครดิต KTC"></label>
-      <label class="field"><span>ยอดต่องวด (บาท)</span><input class="input input--amount" name="per" inputmode="decimal" required value="${d.per ? d.per / 100 : ''}" placeholder="0"></label>
+      <label class="field"><span>ยอดหนี้ทั้งหมด (บาท)</span><input class="input input--amount" name="amount" inputmode="decimal" required value="${d.amount ? d.amount / 100 : ''}" placeholder="0">
+        <small>ยอดรวมที่ต้องผ่อนจนจบ (รวมดอกเบี้ยแล้ว ถ้ามี)</small></label>
       <div class="two">
-        <label class="field"><span>จำนวนงวดทั้งหมด</span><input class="input" name="total" type="number" inputmode="numeric" min="1" max="600" required value="${d.total}"></label>
+        <label class="field"><span>จำนวนงวด</span><input class="input" name="total" type="number" inputmode="numeric" min="1" max="600" required value="${d.total}"></label>
         <label class="field"><span>จ่ายไปแล้ว (งวด)</span><input class="input" name="paid" type="number" inputmode="numeric" min="0" max="600" value="${d.paid}"></label>
       </div>
-      <div class="two">
-        <label class="field"><span>ครบกำหนดทุกวันที่</span><input class="input" name="day" type="number" inputmode="numeric" min="1" max="31" required value="${d.day}">
-          <small>เดือนที่ไม่มีวันนั้น ใช้วันสุดท้ายของเดือน</small></label>
-        <label class="field"><span>งวดแรกเดือน</span><input class="input" name="start" type="month" required value="${d.start}"></label>
-      </div>
+      <p class="notice notice--info" data-per-hint style="margin-top:-4px"></p>
+      <label class="field"><span>${d.paid >= d.total && editing ? 'งวดสุดท้ายครบกำหนดวันที่' : 'งวดถัดไปครบกำหนดวันที่'}</span>
+        <input class="input" name="next" type="date" required value="${editing ? dueDate(d, shownN) : today()}">
+        <small>งวดต่อๆ ไปครบกำหนดวันที่เดียวกันทุกเดือน (เดือนที่ไม่มีวันนั้น ใช้วันสุดท้ายของเดือน)</small></label>
       <label class="field"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(d.note)}" maxlength="80" placeholder="ไม่ใส่ก็ได้"></label>
       ${editing && d.payments && d.payments.length ? `<p class="sub">จ่ายล่าสุด: งวด ${d.payments[d.payments.length - 1].n} เมื่อ ${dateShort(d.payments[d.payments.length - 1].date)}
         <button class="btn btn--small" type="button" data-undo-pay style="margin-left:6px">ยกเลิกงวดล่าสุด</button></p>` : ''}
@@ -280,17 +301,19 @@
         ${editing ? '<button class="btn btn--danger" type="button" data-delete>ลบหนี้</button>' : '<button class="btn" type="button" data-close>ยกเลิก</button>'}
         <button class="btn btn--primary" type="submit">บันทึก</button>
       </div>`, (form) => {
-      const per = toSatang(form.per.value);
+      const amount = toSatang(form.amount.value);
       const total = Math.round(Number(form.total.value));
       const paid = Math.round(Number(form.paid.value) || 0);
-      const day = Math.round(Number(form.day.value));
+      const next = form.next.value;
       if (!form.name.value.trim()) return 'ใส่ชื่อรายการ';
-      if (!per) return 'ใส่ยอดต่องวดมากกว่า 0';
+      if (!amount) return 'ใส่ยอดหนี้ทั้งหมดมากกว่า 0';
       if (!(total >= 1 && total <= 600)) return 'จำนวนงวดต้องอยู่ระหว่าง 1–600';
+      if (amount < total) return 'ยอดหนี้น้อยเกินไปสำหรับจำนวนงวดนี้';
       if (!(paid >= 0 && paid <= total)) return 'งวดที่จ่ายแล้วต้องไม่เกินจำนวนงวดทั้งหมด';
-      if (!(day >= 1 && day <= 31)) return 'วันที่ครบกำหนดต้องอยู่ระหว่าง 1–31';
-      if (!/^\d{4}-\d{2}$/.test(form.start.value)) return 'เลือกเดือนของงวดแรก';
-      const data = { name: form.name.value.trim(), per, total, paid, day, start: form.start.value, note: form.note.value.trim() };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) return 'เลือกวันครบกำหนด';
+      // back from the shown installment to installment #1's month
+      const start = addMonths(next.slice(0, 7), -(Math.min(paid + 1, total) - 1));
+      const data = { name: form.name.value.trim(), amount, total, paid, day: Number(next.slice(8, 10)), start, note: form.note.value.trim() };
       if (editing) Object.assign(db.debts.find((x) => x.id === d.id), data);
       else db.debts.push({ id: uid(), payments: [], ...data });
       save();
@@ -301,6 +324,23 @@
       save();
       toast('ลบแล้ว');
     } : null);
+    // live "งวดละ ฿x" while typing the amount and the number of installments
+    const f = $('form', sheet).elements;
+    const hint = sheet.querySelector('[data-per-hint]');
+    const showPer = () => {
+      const amount = toSatang(f.amount.value);
+      const total = Math.round(Number(f.total.value));
+      if (!amount || !(total >= 1)) { hint.hidden = true; return; }
+      const fake = { amount, total, paid: Math.round(Number(f.paid.value) || 0), payments: [] };
+      const base = baseOf(fake);
+      const last = perOf(fake, total);
+      hint.hidden = false;
+      hint.textContent = `ตกงวดละ ${baht(base)}${last !== base ? ` (งวดสุดท้าย ${baht(last)})` : ''}`
+        + (fake.paid ? ` · คงเหลือ ${baht(remaining(fake))}` : '');
+    };
+    ['amount', 'total', 'paid'].forEach((k) => f[k].addEventListener('input', showPer));
+    showPer();
+
     const undo = sheet.querySelector('[data-undo-pay]');
     if (undo) undo.addEventListener('click', () => {
       const real = db.debts.find((x) => x.id === d.id);
@@ -319,7 +359,7 @@
     openSheet(`
       <h2 id="sheet-title">จ่าย ${esc(d.name)} งวด ${n}/${d.total}</h2>
       <p class="sub" style="margin:-6px 0 14px">ครบกำหนด ${dateLong(dueDate(d, n))}</p>
-      <label class="field"><span>จ่ายไป (บาท)</span><input class="input input--amount" name="amount" inputmode="decimal" value="${d.per / 100}" required></label>
+      <label class="field"><span>จ่ายไป (บาท)</span><input class="input input--amount" name="amount" inputmode="decimal" value="${nextAmount(d) / 100}" required></label>
       <label class="field"><span>วันที่จ่าย</span><input class="input" type="date" name="date" value="${today()}" max="${today()}" required></label>
       <label class="check"><input type="checkbox" name="asExpense" checked><span>บันทึกเป็นรายจ่ายด้วย (หมวด “ผ่อนชำระ”)</span></label>
       <div class="actions"><button class="btn" type="button" data-close>ยกเลิก</button><button class="btn btn--primary" type="submit">ยืนยันจ่ายแล้ว</button></div>`, (form) => {
@@ -353,7 +393,7 @@
       const end = iso(new Date(parse(dueDate(d, n)).getTime() + 86400000)).replace(/-/g, '');
       lines.push('BEGIN:VEVENT', `UID:${d.id}-${n}@mymoney`, `DTSTAMP:${stamp}`,
         `DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${end}`,
-        `SUMMARY:${ical(`💳 จ่าย ${d.name} งวด ${n}/${d.total} (${baht(d.per)})`)}`,
+        `SUMMARY:${ical(`💳 จ่าย ${d.name} งวด ${n}/${d.total} (${baht(perOf(d, n))})`)}`,
         'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${ical(`พรุ่งนี้ครบกำหนด ${d.name}`)}`, 'TRIGGER:-PT15H', 'END:VALARM',
         'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${ical(`วันนี้ครบกำหนด ${d.name}`)}`, 'TRIGGER:PT9H', 'END:VALARM',
         'END:VEVENT');
@@ -420,10 +460,10 @@
         const d = JSON.parse(r.result);
         if (!d || !Array.isArray(d.expenses) || !Array.isArray(d.debts)) throw new Error('bad');
         const ok = d.expenses.every((e) => e && typeof e.amount === 'number' && /^\d{4}-\d{2}-\d{2}$/.test(e.date))
-          && d.debts.every((x) => x && typeof x.per === 'number' && typeof x.total === 'number' && /^\d{4}-\d{2}$/.test(x.start));
+          && d.debts.every((x) => x && (typeof x.amount === 'number' || typeof x.per === 'number') && typeof x.total === 'number' && /^\d{4}-\d{2}$/.test(x.start));
         if (!ok) throw new Error('bad');
         if (!confirm(`กู้คืน ${d.expenses.length} รายจ่าย และ ${d.debts.length} หนี้?\nข้อมูลปัจจุบันในเครื่องจะถูกแทนที่`)) return;
-        db = { v: 1, expenses: d.expenses, debts: d.debts, lastBackup: d.lastBackup || d.exportedAt || null };
+        db = migrate({ v: 2, expenses: d.expenses, debts: d.debts, lastBackup: d.lastBackup || d.exportedAt || null });
         save();
         toast('กู้คืนข้อมูลแล้ว');
         location.hash = '#/';
@@ -497,7 +537,7 @@
     if (t.matches('[data-csv]')) return csv();
     if (t.matches('[data-wipe]')) {
       if (!confirm('ลบรายจ่ายและหนี้ทั้งหมดในเครื่องนี้? กู้คืนไม่ได้ถ้าไม่ได้สำรองไว้')) return;
-      db = { v: 1, expenses: [], debts: [], lastBackup: null };
+      db = { v: 2, expenses: [], debts: [], lastBackup: null };
       save();
       toast('ลบข้อมูลทั้งหมดแล้ว');
       location.hash = '#/';
@@ -512,6 +552,6 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // for tests in the browser console
-  window.__mymoney = { icsFor, dueDate, get db() { return db; } };
+  window.__mymoney = { icsFor, dueDate, perOf, get db() { return db; } };
   route();
 })();

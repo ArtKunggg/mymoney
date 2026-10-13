@@ -49,6 +49,7 @@ body {
   line-height: 1.45;
   padding-bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom) + 12px);
   -webkit-tap-highlight-color: transparent;
+  overflow-x: clip;   /* belt and braces: nothing may push the page sideways */
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 
@@ -60,7 +61,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .top h1 { margin: 0; font-size: 22px; font-weight: 800; }
 
-main { padding: 4px 14px 16px; max-width: 640px; margin: 0 auto; outline: none; }
+main { padding: 4px max(14px, env(safe-area-inset-left)) 84px max(14px, env(safe-area-inset-right)); max-width: 640px; margin: 0 auto; outline: none; }   /* 84px: room under the + button */
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
@@ -79,12 +80,12 @@ main { padding: 4px 14px 16px; max-width: 640px; margin: 0 auto; outline: none; 
 
 .card { background: var(--card); border-radius: var(--radius); padding: 16px; margin: 0 0 12px; border: 1px solid var(--line); }
 .card h2 { margin: 0 0 10px; font-size: 16px; color: var(--soft); font-weight: 700; }
-.big { font-size: 32px; font-weight: 800; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.big { font-size: clamp(22px, 7.4vw, 32px); line-height: 1.15; font-weight: 800; letter-spacing: -.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .sub { color: var(--muted); font-size: 14px; }
 .row { display: flex; align-items: center; gap: 10px; }
 .row--between { justify-content: space-between; }
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.stats .card { margin: 0; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.stats .card { margin: 0; min-width: 0; padding: 14px; }
 .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .notice { border-radius: 14px; padding: 12px 14px; margin: 0 0 12px; font-size: 14px; }
@@ -115,6 +116,7 @@ main { padding: 4px 14px 16px; max-width: 640px; margin: 0 auto; outline: none; 
 
 .list { list-style: none; margin: 0; padding: 0; }
 .item {
+  -webkit-appearance: none; appearance: none; color: inherit; font: inherit;
   display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line);
   width: 100%; background: none; border-left: 0; border-right: 0; border-top: 0; text-align: left; cursor: pointer;
 }
@@ -127,7 +129,7 @@ main { padding: 4px 14px 16px; max-width: 640px; margin: 0 auto; outline: none; 
 .day { margin: 14px 2px 4px; font-size: 13px; font-weight: 700; color: var(--muted); }
 
 .month { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 12px; }
-.month b { font-size: 18px; }
+.month b { font-size: 18px; flex: 1; text-align: center; }
 .month .btn { width: 44px; padding: 0; font-size: 20px; }
 
 .bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
@@ -142,7 +144,7 @@ main { padding: 4px 14px 16px; max-width: 640px; margin: 0 auto; outline: none; 
 
 .debt h3 { margin: 0; font-size: 18px; }
 .debt .row--between { align-items: flex-start; }
-.debt .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 12px 0; font-size: 14px; }
+.debt .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 12px 0; font-size: 14px; }
 .debt .facts b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
 .debt .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .due { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -166,11 +168,15 @@ main { padding: 4px 14px 16px; max-width: 640px; margin: 0 auto; outline: none; 
 .input {
   width: 100%; min-height: 48px; padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--line); background: var(--bg); font-size: 17px;   /* ≥16px: no zoom on iPhone */
+  min-width: 0; max-width: 100%; display: block;
 }
+/* iOS Safari gives date pickers a fixed intrinsic width and centred text: let them shrink like other fields */
+.input[type=date], .input[type=month] { -webkit-appearance: none; appearance: none; text-align: left; line-height: 26px; }
+.input::-webkit-date-and-time-value { text-align: left; }
 .input:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
 .input--amount { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.cats-pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.cats-pick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .cats-pick label { display: block; }
 .cats-pick input { position: absolute; opacity: 0; pointer-events: none; }
 .cats-pick span {
