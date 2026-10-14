@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;width:100vw;height:100vh;overflow:hidden;background:transparent}svg{display:block;width:100vw;height:100vh}</style>
+</head><body>
+<svg id="s" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2dd4bf"/><stop offset=".5" stop-color="#0891b2"/><stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".28" cy=".2" r=".7">
+      <stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="warm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fda4af"/><stop offset="1" stop-color="#fb923c"/>
+    </linearGradient>
+    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1e1b4b" flood-opacity=".35"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <circle cx="900" cy="930" r="260" fill="#fff" opacity=".07"/>
+  <circle cx="90" cy="80" r="170" fill="#fff" opacity=".06"/>
+  <g id="mark" filter="url(#sh)">
+    <!-- progress ring: faint track + 3/4 arc, the app's debt-ring motif -->
+    <circle cx="512" cy="512" r="300" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="64"/>
+    <circle cx="512" cy="512" r="300" fill="none" stroke="#fff" stroke-width="64" stroke-linecap="round"
+      pathLength="100" stroke-dasharray="72 100" transform="rotate(-90 512 512)"/>
+    <!-- accent knob at the arc's end (72% round from 12 o'clock) -->
+    <circle cx="223" cy="430" r="54" fill="url(#warm)" stroke="#fff" stroke-width="16"/>
+    <text x="512" y="520" text-anchor="middle" dominant-baseline="central"
+      font-family="Leelawadee UI, Tahoma, sans-serif" font-weight="700" font-size="400" fill="#fff">฿</text>
+  </g>
+  <!-- sparkle -->
+  <path d="M808 196 l20 54 54 20 -54 20 -20 54 -20 -54 -54 -20 54 -20z" fill="#fff" opacity=".95"/>
+  <path d="M884 330 l9 24 24 9 -24 9 -9 24 -9 -24 -24 -9 24 -9z" fill="#fff" opacity=".7"/>
+</svg>
+<script>
+  // #mask: shrink the mark into the maskable safe zone (inner 80% circle)
+  if (location.hash === '#mask') document.getElementById('mark').setAttribute('transform', 'translate(512 512) scale(.8) translate(-512 -512)');
+  // knob position: angle for 72% of the circle, starting at 12 o'clock, clockwise
+  const a = -Math.PI / 2 + 0.72 * 2 * Math.PI, k = document.querySelector('#mark circle:nth-of-type(3)');
+  k.setAttribute('cx', 512 + 300 * Math.cos(a)); k.setAttribute('cy', 512 + 300 * Math.sin(a));
+</script>
+</body></html>
