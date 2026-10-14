@@ -75,6 +75,8 @@
   // A debt: name, amount (satang owed in total), total (installments), paid (installments done),
   // day (due day of month), start ('YYYY-MM' of installment #1), payments [{n, date, amount}].
   // Installments split the amount evenly; the last one takes the leftover satang.
+  // A debt with kind 'flex' has no schedule: amount owed, opening (paid before it was entered),
+  // and payments [{date, amount}] of any size; progress is shown as a percentage.
   function dueDate(debt, n) {                         // date of installment n (1-based)
     const ym = addMonths(debt.start, n - 1);
     const [y, m] = ym.split('-').map(Number);
@@ -84,11 +86,15 @@
   const baseOf = (d) => Math.floor(d.amount / d.total);
   const perOf = (d, n) => (n >= d.total ? d.amount - baseOf(d) * (d.total - 1) : baseOf(d));
   // installments marked paid when the debt was entered count at their planned amount
-  const paidAmount = (d) => (d.payments || []).reduce((s, p) => s + p.amount, 0)
-    + Math.max(0, d.paid - (d.payments || []).length) * baseOf(d);
+  const isFlex = (d) => d.kind === 'flex';
+  const paymentsSum = (d) => (d.payments || []).reduce((s, p) => s + p.amount, 0);
+  const paidAmount = (d) => (isFlex(d) ? (d.opening || 0) + paymentsSum(d)
+    : paymentsSum(d) + Math.max(0, d.paid - (d.payments || []).length) * baseOf(d));
   const remaining = (d) => Math.max(0, d.amount - paidAmount(d));
-  const isDone = (d) => d.paid >= d.total || remaining(d) <= 0;
-  const nextDue = (d) => (isDone(d) ? null : dueDate(d, d.paid + 1));
+  const isDone = (d) => (isFlex(d) ? remaining(d) <= 0 : d.paid >= d.total || remaining(d) <= 0);
+  const nextDue = (d) => (isFlex(d) || isDone(d) ? null : dueDate(d, d.paid + 1));
+  // whole percent paid, rounded down so an unfinished debt never reads 100%
+  const pctPaid = (d) => (isDone(d) ? 100 : Math.min(99, Math.floor((paidAmount(d) / d.amount) * 100)));
   const nextAmount = (d) => Math.min(perOf(d, d.paid + 1), remaining(d));
   function dueStatus(date) {
     const k = daysBetween(today(), date);
@@ -123,7 +129,7 @@
     const lastSpent = sum(db.expenses.filter((e) => monthOf(e.date) === addMonths(m, -1)));
     const open = db.debts.filter((d) => !isDone(d));
     const owed = open.reduce((s, d) => s + remaining(d), 0);
-    const upcoming = open.map((d) => ({ d, date: nextDue(d) }))
+    const upcoming = open.filter((d) => !isFlex(d)).map((d) => ({ d, date: nextDue(d) }))
       .filter((x) => daysBetween(today(), x.date) <= 14)
       .sort((a, b) => a.date.localeCompare(b.date));
     const hasData = db.expenses.length || db.debts.length;
@@ -243,15 +249,17 @@
 
   // ------------------------------------------------------------ debts
   function renderDebts() {
-    setTitle('หนี้ผ่อนเป็นงวด');
-    const open = db.debts.filter((d) => !isDone(d)).sort((a, b) => nextDue(a).localeCompare(nextDue(b)));
+    setTitle('หนี้');
+    // scheduled debts first, soonest due first; then the ones without installments
+    const open = db.debts.filter((d) => !isDone(d))
+      .sort((a, b) => isFlex(a) - isFlex(b) || (nextDue(a) || '').localeCompare(nextDue(b) || ''));
     const done = db.debts.filter(isDone);
     view.innerHTML = `
-      ${open.length ? open.map(debtCard).join('') : '<section class="card"><div class="empty"><b>💳</b>ยังไม่มีหนี้ที่บันทึกไว้<br>กด “เพิ่มหนี้” เพื่อเริ่ม</div></section>'}
-      <button class="btn btn--primary btn--block" data-add-debt>+ เพิ่มหนี้ผ่อน</button>
+      ${open.length ? open.map((d) => (isFlex(d) ? flexCard(d) : debtCard(d))).join('') : '<section class="card"><div class="empty"><b>💳</b>ยังไม่มีหนี้ที่บันทึกไว้<br>กด “เพิ่มหนี้” เพื่อเริ่ม</div></section>'}
+      <button class="btn btn--primary btn--block" data-add-debt>+ เพิ่มหนี้</button>
       ${done.length ? `<section class="card" style="margin-top:12px"><h2>ปิดหนี้แล้ว 🎉</h2><div class="list">${done.map((d) => `
         <button class="item" data-edit-debt="${d.id}"><span class="item__ico" aria-hidden="true">✅</span>
-          <span class="item__main"><span class="item__title">${esc(d.name)}</span><span class="item__sub">${baht(d.amount)} · ${d.total} งวด</span></span></button>`).join('')}</div></section>` : ''}`;
+          <span class="item__main"><span class="item__title">${esc(d.name)}</span><span class="item__sub">${baht(d.amount)} · ${isFlex(d) ? 'ไม่มีงวด' : `${d.total} งวด`}</span></span></button>`).join('')}</div></section>` : ''}`;
   }
 
   function debtCard(d) {
@@ -276,13 +284,138 @@
     </section>`;
   }
 
-  function debtForm(d) {
+  function flexCard(d) {
+    const p = pctPaid(d);
+    return `<section class="card debt">
+      <div class="row row--between"><div><h3>${esc(d.name)}</h3>${d.note ? `<div class="sub">${esc(d.note)}</div>` : ''}</div>
+        <span class="chip chip--gray">ไม่มีงวด</span></div>
+      <div class="pct"><b class="big num">${p}%</b><span class="sub">จ่ายไปแล้ว</span></div>
+      <div class="bar bar--lg" role="progressbar" aria-valuenow="${p}" aria-valuemin="0" aria-valuemax="100"><i style="width:${p}%"></i></div>
+      <div class="facts">
+        <div><span class="sub">จ่ายไปแล้ว</span><b>${baht(paidAmount(d))}</b></div>
+        <div><span class="sub">คงเหลือ</span><b>${baht(remaining(d))}</b></div>
+      </div>
+      <div class="sub" style="margin:-4px 0 0">ยอดหนี้ทั้งหมด ${baht(d.amount)}</div>
+      <div class="actions">
+        <button class="btn btn--small btn--primary" data-pay="${d.id}">💸 จ่ายเพิ่ม</button>
+        <button class="btn btn--small" data-edit-debt="${d.id}">แก้ไข</button>
+      </div>
+    </section>`;
+  }
+
+  // New debts start with a choice of type; switching keeps the name typed so far.
+  const kindPick = (kind) => `<div class="seg" role="group" aria-label="ประเภทหนี้">
+      <button type="button" data-kind="plan" aria-pressed="${kind === 'plan'}">📅 ผ่อนเป็นงวด</button>
+      <button type="button" data-kind="flex" aria-pressed="${kind === 'flex'}">📊 ไม่มีงวด</button></div>`;
+  function bindKindPick() {
+    $$('[data-kind]', sheet).forEach((b) => b.addEventListener('click', () => {
+      const name = $('form', sheet).elements.name.value;
+      (b.dataset.kind === 'flex' ? flexForm : debtForm)(null, name);
+    }));
+  }
+  function bindUndo(d) {
+    const undo = sheet.querySelector('[data-undo-pay]');
+    if (undo) undo.addEventListener('click', () => {
+      const real = db.debts.find((x) => x.id === d.id);
+      const p = real.payments.pop();
+      if (!isFlex(real)) real.paid = Math.max(0, real.paid - 1);
+      if (p && p.expenseId) db.expenses = db.expenses.filter((e) => e.id !== p.expenseId);
+      save();
+      closeSheet();
+      toast(isFlex(real) ? `ยกเลิกการจ่าย ${p ? baht(p.amount) : ''} แล้ว` : `ยกเลิกงวด ${p ? p.n : ''} แล้ว`);
+      route();
+    });
+  }
+
+  function flexForm(d, preName = '') {
     const editing = Boolean(d);
-    d = d || { name: '', amount: 0, total: 10, paid: 0, day: new Date().getDate(), start: thisMonth(), note: '' };
+    d = d || { kind: 'flex', name: preName, amount: 0, opening: 0, payments: [], note: '' };
+    const logged = paymentsSum(d);
+    const last = editing && d.payments.length ? d.payments[d.payments.length - 1] : null;
+    openSheet(`
+      <h2 id="sheet-title">${editing ? 'แก้ไขหนี้' : 'เพิ่มหนี้'}</h2>
+      ${editing ? '' : kindPick('flex')}
+      <label class="field"><span>ชื่อรายการ</span><input class="input" name="name" value="${esc(d.name)}" required maxlength="60" placeholder="เช่น ยืมเพื่อน, ค้างบัตรเครดิต"></label>
+      <label class="field"><span>ยอดหนี้ทั้งหมด (บาท)</span><input class="input input--amount" name="amount" inputmode="decimal" required value="${d.amount ? d.amount / 100 : ''}" placeholder="0"></label>
+      <label class="field"><span>จ่ายไปแล้วรวม (บาท)</span><input class="input" name="paidSoFar" inputmode="decimal" value="${paidAmount(d) ? paidAmount(d) / 100 : ''}" placeholder="0">
+        <small>${editing ? 'รวมทุกครั้งที่จ่ายมา แก้ตัวเลขนี้ได้ถ้าไม่ตรง' : 'ถ้ายังไม่เคยจ่าย เว้นว่างไว้'}</small></label>
+      <p class="notice notice--info" data-pct-hint style="margin-top:-4px"></p>
+      <label class="field"><span>หมายเหตุ</span><input class="input" name="note" value="${esc(d.note)}" maxlength="80" placeholder="ไม่ใส่ก็ได้"></label>
+      ${last ? `<p class="sub">จ่ายล่าสุด: ${baht(last.amount)} เมื่อ ${dateShort(last.date)}
+        <button class="btn btn--small" type="button" data-undo-pay style="margin-left:6px">ยกเลิกครั้งล่าสุด</button></p>` : ''}
+      <div class="actions">
+        ${editing ? '<button class="btn btn--danger" type="button" data-delete>ลบหนี้</button>' : '<button class="btn" type="button" data-close>ยกเลิก</button>'}
+        <button class="btn btn--primary" type="submit">บันทึก</button>
+      </div>`, (form) => {
+      const amount = toSatang(form.amount.value);
+      const paid = toSatang(form.paidSoFar.value);
+      if (!form.name.value.trim()) return 'ใส่ชื่อรายการ';
+      if (!amount) return 'ใส่ยอดหนี้ทั้งหมดมากกว่า 0';
+      if (paid > amount) return 'ยอดที่จ่ายแล้วมากกว่ายอดหนี้ทั้งหมด';
+      // payments logged through "จ่ายเพิ่ม" stay; the typed total adjusts what was paid before them
+      if (paid < logged) return `ยอดจ่ายแล้วต้องไม่น้อยกว่าที่บันทึกการจ่ายไว้ (${baht(logged)})`;
+      const data = { kind: 'flex', name: form.name.value.trim(), amount, opening: paid - logged, note: form.note.value.trim() };
+      if (editing) Object.assign(db.debts.find((x) => x.id === d.id), data);
+      else db.debts.push({ id: uid(), payments: [], ...data });
+      save();
+      toast(editing ? 'แก้ไขแล้ว' : 'เพิ่มหนี้แล้ว');
+    }, editing ? () => {
+      if (!confirm(`ลบ “${d.name}” และประวัติการจ่ายของหนี้นี้?`)) return false;
+      db.debts = db.debts.filter((x) => x.id !== d.id);
+      save();
+      toast('ลบแล้ว');
+    } : null);
+    const f = $('form', sheet).elements;
+    const hint = sheet.querySelector('[data-pct-hint]');
+    const showPct = () => {
+      const amount = toSatang(f.amount.value);
+      if (!amount) { hint.hidden = true; return; }
+      const fake = { kind: 'flex', amount, opening: toSatang(f.paidSoFar.value), payments: [] };
+      hint.hidden = false;
+      hint.textContent = `จ่ายไปแล้ว ${pctPaid(fake)}% · คงเหลือ ${baht(remaining(fake))}`;
+    };
+    ['amount', 'paidSoFar'].forEach((k) => f[k].addEventListener('input', showPct));
+    showPct();
+    if (!editing) bindKindPick();
+    bindUndo(d);
+  }
+
+  function flexPayForm(d) {
+    openSheet(`
+      <h2 id="sheet-title">จ่าย ${esc(d.name)}</h2>
+      <p class="sub" style="margin:-6px 0 14px">คงเหลือ ${baht(remaining(d))} · จ่ายไปแล้ว ${pctPaid(d)}%</p>
+      <label class="field"><span>จ่ายไป (บาท)</span><input class="input input--amount" name="amount" inputmode="decimal" required placeholder="0"></label>
+      <label class="field"><span>วันที่จ่าย</span><input class="input" type="date" name="date" value="${today()}" max="${today()}" required></label>
+      <label class="check"><input type="checkbox" name="asExpense" checked><span>บันทึกเป็นรายจ่ายด้วย (หมวด “ผ่อนชำระ”)</span></label>
+      <div class="actions"><button class="btn" type="button" data-close>ยกเลิก</button><button class="btn btn--primary" type="submit">ยืนยันจ่ายแล้ว</button></div>`, (form) => {
+      const amount = toSatang(form.amount.value);
+      const real = db.debts.find((x) => x.id === d.id);
+      if (!amount) return 'ใส่จำนวนเงินมากกว่า 0';
+      if (amount > remaining(real)) return `จ่ายเกินยอดคงเหลือ (${baht(remaining(real))})`;
+      const date = form.date.value || today();
+      const pay = { date, amount };
+      if (form.asExpense.checked) {
+        const ex = { id: uid(), ts: Date.now(), amount, cat: 'debt', date, note: `จ่ายหนี้ ${real.name}` };
+        db.expenses.push(ex);
+        pay.expenseId = ex.id;
+      }
+      real.payments = real.payments || [];
+      real.payments.push(pay);
+      save();
+      toast(isDone(real) ? `🎉 ปิดหนี้ “${real.name}” ครบแล้ว!` : `บันทึกแล้ว · จ่ายไป ${pctPaid(real)}% · คงเหลือ ${baht(remaining(real))}`, 4000);
+    });
+    setTimeout(() => sheet.querySelector('[name=amount]').focus(), 50);
+  }
+
+  function debtForm(d, preName = '') {
+    const editing = Boolean(d);
+    if (editing && isFlex(d)) return flexForm(d);
+    d = d || { name: preName, amount: 0, total: 10, paid: 0, day: new Date().getDate(), start: thisMonth(), note: '' };
     // the date the user sees is the *next* installment's (or the last one's, for a finished debt)
     const shownN = Math.min(d.paid + 1, d.total);
     openSheet(`
-      <h2 id="sheet-title">${editing ? 'แก้ไขหนี้' : 'เพิ่มหนี้ผ่อน'}</h2>
+      <h2 id="sheet-title">${editing ? 'แก้ไขหนี้' : 'เพิ่มหนี้'}</h2>
+      ${editing ? '' : kindPick('plan')}
       <label class="field"><span>ชื่อรายการ</span><input class="input" name="name" value="${esc(d.name)}" required maxlength="60" placeholder="เช่น ผ่อนโทรศัพท์, บัตรเครดิต KTC"></label>
       <label class="field"><span>ยอดหนี้ทั้งหมด (บาท)</span><input class="input input--amount" name="amount" inputmode="decimal" required value="${d.amount ? d.amount / 100 : ''}" placeholder="0">
         <small>ยอดรวมที่ต้องผ่อนจนจบ (รวมดอกเบี้ยแล้ว ถ้ามี)</small></label>
@@ -340,21 +473,12 @@
     };
     ['amount', 'total', 'paid'].forEach((k) => f[k].addEventListener('input', showPer));
     showPer();
-
-    const undo = sheet.querySelector('[data-undo-pay]');
-    if (undo) undo.addEventListener('click', () => {
-      const real = db.debts.find((x) => x.id === d.id);
-      const p = real.payments.pop();
-      real.paid = Math.max(0, real.paid - 1);
-      if (p && p.expenseId) db.expenses = db.expenses.filter((e) => e.id !== p.expenseId);
-      save();
-      closeSheet();
-      toast(`ยกเลิกงวด ${p ? p.n : ''} แล้ว`);
-      route();
-    });
+    if (!editing) bindKindPick();
+    bindUndo(d);
   }
 
   function payForm(d) {
+    if (isFlex(d)) return flexPayForm(d);
     const n = d.paid + 1;
     openSheet(`
       <h2 id="sheet-title">จ่าย ${esc(d.name)} งวด ${n}/${d.total}</h2>
@@ -460,7 +584,8 @@
         const d = JSON.parse(r.result);
         if (!d || !Array.isArray(d.expenses) || !Array.isArray(d.debts)) throw new Error('bad');
         const ok = d.expenses.every((e) => e && typeof e.amount === 'number' && /^\d{4}-\d{2}-\d{2}$/.test(e.date))
-          && d.debts.every((x) => x && (typeof x.amount === 'number' || typeof x.per === 'number') && typeof x.total === 'number' && /^\d{4}-\d{2}$/.test(x.start));
+          && d.debts.every((x) => x && (x.kind === 'flex' ? typeof x.amount === 'number'
+            : (typeof x.amount === 'number' || typeof x.per === 'number') && typeof x.total === 'number' && /^\d{4}-\d{2}$/.test(x.start)));
         if (!ok) throw new Error('bad');
         if (!confirm(`กู้คืน ${d.expenses.length} รายจ่าย และ ${d.debts.length} หนี้?\nข้อมูลปัจจุบันในเครื่องจะถูกแทนที่`)) return;
         db = migrate({ v: 2, expenses: d.expenses, debts: d.debts, lastBackup: d.lastBackup || d.exportedAt || null });
@@ -497,7 +622,7 @@
       closeSheet();
       route();
     });
-    sheet.showModal();
+    if (!sheet.open) sheet.showModal();
   }
   function closeSheet() { if (sheet.open) sheet.close(); }
   sheet.addEventListener('click', (ev) => {
@@ -552,6 +677,6 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // for tests in the browser console
-  window.__mymoney = { icsFor, dueDate, perOf, get db() { return db; } };
+  window.__mymoney = { icsFor, dueDate, perOf, pctPaid, get db() { return db; } };
   route();
 })();
