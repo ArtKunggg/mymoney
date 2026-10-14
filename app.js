@@ -8,10 +8,12 @@
 
   const KEY = 'mymoney.v1';
   const CATS = [
-    ['food', '🍜', 'อาหาร'], ['travel', '🚗', 'เดินทาง'], ['bills', '💡', 'บิล/ค่าน้ำไฟ'], ['shop', '🛍️', 'ช้อปปิ้ง'],
-    ['health', '💊', 'สุขภาพ'], ['fun', '🎮', 'บันเทิง'], ['debt', '💳', 'ผ่อนชำระ'], ['other', '📦', 'อื่นๆ'],
+    ['food', '🍜', 'อาหาร', '#f97316'], ['travel', '🚗', 'เดินทาง', '#3b82f6'], ['bills', '💡', 'บิล/ค่าน้ำไฟ', '#eab308'],
+    ['shop', '🛍️', 'ช้อปปิ้ง', '#ec4899'], ['health', '💊', 'สุขภาพ', '#10b981'], ['fun', '🎮', 'บันเทิง', '#8b5cf6'],
+    ['debt', '💳', 'ผ่อนชำระ', '#ef4444'], ['other', '📦', 'อื่นๆ', '#64748b'],
   ];
-  const CAT = Object.fromEntries(CATS.map(([id, ico, name]) => [id, { ico, name }]));
+  const CAT = Object.fromEntries(CATS.map(([id, ico, name, color]) => [id, { ico, name, color }]));
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const SOON_DAYS = 5;
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -118,12 +120,45 @@
   }
   window.addEventListener('hashchange', route);
 
-  const setTitle = (t) => { $('#title').textContent = t; document.title = t === 'เงินของฉัน' ? t : `${t} — เงินของฉัน`; };
+  const setTitle = (t, sub = '') => {
+    $('#title').textContent = t;
+    $('#subtitle').textContent = sub;
+    document.title = t === 'เงินของฉัน' ? t : `${t} — เงินของฉัน`;
+  };
+  const greeting = () => {
+    const h = new Date().getHours();
+    return h < 12 ? 'สวัสดีตอนเช้า ☀️' : h < 17 ? 'สวัสดีตอนบ่าย 🌤️' : 'สวัสดีตอนเย็น 🌙';
+  };
+
+  // Home totals roll up from zero; the real figure is already in the DOM, so nothing depends on this.
+  function countUp(root) {
+    if (reduceMotion()) return;
+    $$('[data-count]', root).forEach((el) => {
+      const to = Number(el.dataset.count);
+      const t0 = performance.now();
+      const step = (t) => {
+        const k = Math.min(1, (t - t0) / 800);
+        el.textContent = baht(k < 1 ? Math.round((to * (1 - (1 - k) ** 3)) / 100) * 100 : to);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  function confetti() {
+    if (reduceMotion()) return;
+    const colors = ['#14b8a6', '#6366f1', '#f97316', '#ec4899', '#eab308', '#22c55e'];
+    const box = document.createElement('div');
+    box.className = 'confetti';
+    box.innerHTML = Array.from({ length: 60 }, () => `<i style="--x:${Math.random() * 100}%;--dx:${(Math.random() - 0.5) * 160}px;--r:${Math.random() * 900 - 450}deg;--d:${1.6 + Math.random() * 1.4}s;--delay:${Math.random() * 0.4}s;--c:${colors[Math.floor(Math.random() * colors.length)]}"></i>`).join('');
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), 3600);
+  }
   const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
   // ------------------------------------------------------------ home
   function renderHome() {
-    setTitle('เงินของฉัน');
+    setTitle('เงินของฉัน', `${greeting()} · ${dateLong(today())}`);
     const m = thisMonth();
     const spent = sum(db.expenses.filter((e) => monthOf(e.date) === m));
     const lastSpent = sum(db.expenses.filter((e) => monthOf(e.date) === addMonths(m, -1)));
@@ -141,13 +176,14 @@
       ${hasData && (backupAge === null || backupAge > 30) ? `<div class="notice notice--info"><b>${backupAge === null ? 'ยังไม่เคยสำรองข้อมูล' : `สำรองข้อมูลล่าสุด ${backupAge} วันที่แล้ว`}</b>
         ข้อมูลอยู่ในเครื่องนี้เครื่องเดียว — <a href="#/settings">สำรองเก็บไว้ใน iCloud Drive</a> กันหาย</div>` : ''}
       <div class="stats">
-        <section class="card"><h2>ใช้ไปเดือนนี้</h2><div class="big num">${baht(spent)}</div>
-          <div class="sub">${lastSpent ? `เดือนก่อน ${baht(lastSpent)}` : monthName(m)}</div></section>
-        <section class="card"><h2>หนี้คงเหลือ</h2><div class="big num">${baht(owed)}</div>
+        <section class="card"><h2>💸 ใช้ไปเดือนนี้</h2><div class="big num" data-count="${spent}">${baht(spent)}</div>
+          <div class="sub">${lastSpent ? `เดือนก่อน ${baht(lastSpent)}` : monthName(m)}</div>
+          ${lastSpent ? `<span class="trend">${spent > lastSpent ? '▲' : '▼'} ${Math.abs(Math.round(((spent - lastSpent) / lastSpent) * 100))}%</span>` : ''}</section>
+        <section class="card"><h2>💳 หนี้คงเหลือ</h2><div class="big num" data-count="${owed}">${baht(owed)}</div>
           <div class="sub">${open.length ? `${open.length} รายการ` : 'ไม่มีหนี้ค้าง 🎉'}</div></section>
       </div>
-      <section class="card" style="margin-top:12px">
-        <h2>ต้องจ่ายใน 14 วันนี้</h2>
+      <section class="card">
+        <h2>⏰ ต้องจ่ายใน 14 วันนี้</h2>
         ${upcoming.length ? upcoming.map(({ d, date }) => {
           const st = dueStatus(date);
           return `<div class="due">
@@ -159,10 +195,11 @@
         }).join('') : `<div class="empty" style="padding:12px"><b>✅</b>${open.length ? 'ยังไม่มีงวดที่ต้องจ่ายใน 2 สัปดาห์นี้' : 'ยังไม่มีหนี้ที่บันทึกไว้'}</div>`}
       </section>
       <section class="card">
-        <div class="row row--between"><h2 style="margin:0">รายจ่ายล่าสุด</h2><a href="#/expenses" class="sub">ดูทั้งหมด</a></div>
+        <div class="row row--between" style="margin-bottom:6px"><h2 style="margin:0">🧾 รายจ่ายล่าสุด</h2><a href="#/expenses" class="sub">ดูทั้งหมด</a></div>
         ${expenseList(db.expenses.slice().sort(byNewest).slice(0, 5), false) || '<div class="empty"><b>🧾</b>ยังไม่มีรายจ่าย กด + เพื่อจด</div>'}
       </section>
       <button class="fab" data-add-expense aria-label="จดรายจ่าย">+</button>`;
+    countUp(view);
   }
 
   const sum = (list) => list.reduce((s, e) => s + e.amount, 0);
@@ -180,7 +217,7 @@
       }
       const c = CAT[e.cat] || CAT.other;
       html += `<button class="item" data-edit-expense="${e.id}">
-        <span class="item__ico" aria-hidden="true">${c.ico}</span>
+        <span class="item__ico" aria-hidden="true" style="--c:${c.color}">${c.ico}</span>
         <span class="item__main"><span class="item__title">${esc(e.note || c.name)}</span>
           <span class="item__sub">${esc(c.name)}${groupByDay ? '' : ` · ${dateShort(e.date)}`}</span></span>
         <span class="item__amt">${baht(e.amount)}</span></button>`;
@@ -193,7 +230,7 @@
     setTitle('รายจ่าย');
     const list = db.expenses.filter((e) => monthOf(e.date) === m).sort(byNewest);
     const total = sum(list);
-    const byCat = CATS.map(([id, ico, name]) => ({ id, ico, name, amt: sum(list.filter((e) => e.cat === id)) }))
+    const byCat = CATS.map(([id, ico, name, color]) => ({ id, ico, name, color, amt: sum(list.filter((e) => e.cat === id)) }))
       .filter((c) => c.amt > 0).sort((a, b) => b.amt - a.amt);
     const next = addMonths(m, 1);
     view.innerHTML = `
@@ -203,14 +240,27 @@
         ${next <= thisMonth() ? `<a class="btn" href="#/expenses?m=${next}" aria-label="เดือนถัดไป">›</a>` : '<span style="width:44px"></span>'}
       </div>
       <section class="card">
-        <h2>รวมทั้งเดือน</h2><div class="big num">${baht(total)}</div>
-        <div class="sub">${list.length} รายการ</div>
+        <div class="sum-head">
+          <div><h2>รวมทั้งเดือน</h2><div class="big num">${baht(total)}</div>
+            <div class="sub">${list.length} รายการ</div></div>
+          ${byCat.length ? `<div class="donut" aria-hidden="true" style="background:conic-gradient(${donutStops(byCat, total)})"></div>` : ''}
+        </div>
         ${byCat.length ? `<div class="cats">${byCat.map((c) => `
-          <div class="row row--between"><span>${c.ico} ${c.name}</span><span class="num">${baht(c.amt)} · ${Math.round((c.amt / total) * 100)}%</span></div>
-          <div class="bar"><i style="width:${Math.max(2, (c.amt / byCat[0].amt) * 100)}%"></i></div>`).join('')}</div>` : ''}
+          <div class="row row--between" style="--c:${c.color}"><span><span class="dot"></span>${c.ico} ${c.name}</span><span class="num">${baht(c.amt)} · ${Math.round((c.amt / total) * 100)}%</span></div>
+          <div class="bar" style="--c:${c.color}"><i style="width:${Math.max(2, (c.amt / byCat[0].amt) * 100)}%"></i></div>`).join('')}</div>` : ''}
       </section>
       <section class="card">${expenseList(list) || '<div class="empty"><b>🧾</b>เดือนนี้ยังไม่มีรายจ่าย</div>'}</section>
       <button class="fab" data-add-expense aria-label="จดรายจ่าย">+</button>`;
+  }
+
+  // conic-gradient stops, one slice per category, with a hairline gap between slices
+  function donutStops(byCat, total) {
+    let at = 0;
+    return byCat.map((c) => {
+      const from = at;
+      at += (c.amt / total) * 100;
+      return `${c.color} ${from}% ${byCat.length > 1 ? Math.max(from, at - 0.6) : at}%, transparent 0 ${at}%`;
+    }).join(', ');
   }
 
   function expenseForm(e) {
@@ -221,8 +271,8 @@
       <label class="field"><span>จำนวนเงิน (บาท)</span>
         <input class="input input--amount" name="amount" inputmode="decimal" autocomplete="off" required
           value="${e.amount ? e.amount / 100 : ''}" placeholder="0"></label>
-      <div class="field"><span>หมวด</span><div class="cats-pick">${CATS.map(([id, ico, name]) => `
-        <label><input type="radio" name="cat" value="${id}" ${e.cat === id ? 'checked' : ''}><span><i>${ico}</i>${name}</span></label>`).join('')}</div></div>
+      <div class="field"><span>หมวด</span><div class="cats-pick">${CATS.map(([id, ico, name, color]) => `
+        <label><input type="radio" name="cat" value="${id}" ${e.cat === id ? 'checked' : ''}><span style="--c:${color}"><i>${ico}</i>${name}</span></label>`).join('')}</div></div>
       <div class="two">
         <label class="field"><span>วันที่</span><input class="input" type="date" name="date" value="${e.date}" max="${today()}" required></label>
         <label class="field"><span>บันทึก</span><input class="input" name="note" value="${esc(e.note)}" placeholder="เช่น ข้าวกลางวัน" maxlength="80"></label>
@@ -275,7 +325,8 @@
         <div><span class="sub">คงเหลือ</span><b>${baht(remaining(d))}</b></div>
       </div>
       <div class="sub" style="margin:-4px 0 8px">ยอดหนี้ทั้งหมด ${baht(d.amount)} · จ่ายไปแล้ว ${baht(paidAmount(d))}</div>
-      <div class="bar"><i style="width:${Math.min(100, (paidAmount(d) / d.amount) * 100)}%"></i></div>
+      ${d.total <= 36 ? `<div class="segs" style="--n:${d.total}" aria-hidden="true">${Array.from({ length: d.total }, (_, i) => `<i class="${i < d.paid ? 'on' : i === d.paid ? 'next' : ''}" style="--i:${i}"></i>`).join('')}</div>`
+        : `<div class="bar"><i style="width:${Math.min(100, (paidAmount(d) / d.amount) * 100)}%"></i></div>`}
       <div class="actions">
         <button class="btn btn--small btn--primary" data-pay="${d.id}">จ่ายงวด ${d.paid + 1} แล้ว</button>
         <button class="btn btn--small" data-ics="${d.id}">📅 เพิ่มลงปฏิทิน</button>
@@ -289,13 +340,20 @@
     return `<section class="card debt">
       <div class="row row--between"><div><h3>${esc(d.name)}</h3>${d.note ? `<div class="sub">${esc(d.note)}</div>` : ''}</div>
         <span class="chip chip--gray">ไม่มีงวด</span></div>
-      <div class="pct"><b class="big num">${p}%</b><span class="sub">จ่ายไปแล้ว</span></div>
-      <div class="bar bar--lg" role="progressbar" aria-valuenow="${p}" aria-valuemin="0" aria-valuemax="100"><i style="width:${p}%"></i></div>
-      <div class="facts">
-        <div><span class="sub">จ่ายไปแล้ว</span><b>${baht(paidAmount(d))}</b></div>
-        <div><span class="sub">คงเหลือ</span><b>${baht(remaining(d))}</b></div>
+      <div class="flex-body">
+        <div class="ring" role="progressbar" aria-valuenow="${p}" aria-valuemin="0" aria-valuemax="100" aria-label="จ่ายไปแล้ว ${p}%">
+          <svg viewBox="0 0 120 120" aria-hidden="true"><defs><linearGradient id="rg-${d.id}" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#14b8a6"/><stop offset=".55" stop-color="#0891b2"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+            <circle class="ring__track" cx="60" cy="60" r="52"/>
+            ${p ? `<circle class="ring__val" cx="60" cy="60" r="52" pathLength="100" stroke="url(#rg-${d.id})" stroke-dasharray="${p} 100"/>` : ''}</svg>
+          <div class="ring__label"><b class="num">${p}%</b><span>จ่ายไปแล้ว</span></div>
+        </div>
+        <div class="facts">
+          <div><span class="sub">จ่ายไปแล้ว</span><b>${baht(paidAmount(d))}</b></div>
+          <div><span class="sub">คงเหลือ</span><b>${baht(remaining(d))}</b></div>
+          <div><span class="sub">ยอดหนี้ทั้งหมด</span><b>${baht(d.amount)}</b></div>
+        </div>
       </div>
-      <div class="sub" style="margin:-4px 0 0">ยอดหนี้ทั้งหมด ${baht(d.amount)}</div>
       <div class="actions">
         <button class="btn btn--small btn--primary" data-pay="${d.id}">💸 จ่ายเพิ่ม</button>
         <button class="btn btn--small" data-edit-debt="${d.id}">แก้ไข</button>
@@ -402,6 +460,7 @@
       real.payments = real.payments || [];
       real.payments.push(pay);
       save();
+      if (isDone(real)) confetti();
       toast(isDone(real) ? `🎉 ปิดหนี้ “${real.name}” ครบแล้ว!` : `บันทึกแล้ว · จ่ายไป ${pctPaid(real)}% · คงเหลือ ${baht(remaining(real))}`, 4000);
     });
     setTimeout(() => sheet.querySelector('[name=amount]').focus(), 50);
@@ -501,6 +560,7 @@
       real.payments.push(pay);
       real.paid = Math.min(real.total, real.paid + 1);
       save();
+      if (isDone(real)) confetti();
       toast(isDone(real) ? `🎉 ปิดหนี้ “${real.name}” ครบแล้ว!` : `บันทึกงวด ${n} แล้ว · คงเหลือ ${baht(remaining(real))}`, 4000);
     });
   }

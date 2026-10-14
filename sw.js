@@ -1,7 +1,7 @@
 // Offline: keep the app's own files cached. Data is in localStorage, never in this cache.
 // Bump VERSION whenever a file below changes, so phones pick up the new copy.
-const VERSION = 'mymoney-v4';
-const FILES = ['./', 'index.html', 'app.css?v=4', 'app.js?v=4', 'manifest.webmanifest',
+const VERSION = 'mymoney-v5';
+const FILES = ['./', 'index.html', 'app.css?v=5', 'app.js?v=5', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
