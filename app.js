@@ -673,6 +673,11 @@
     if (ev.target.matches('[data-restore]') && ev.target.files[0]) restore(ev.target.files[0]);
   });
 
+  // hairline under the header once content scrolls beneath it
+  const top = $('.top');
+  const onScroll = () => top.classList.toggle('is-scrolled', window.scrollY > 4);
+  window.addEventListener('scroll', onScroll, { passive: true });
+
   // ------------------------------------------------------------ offline
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
